@@ -1,6 +1,6 @@
 # frfz_tempo_cv
 
-A MOD Audio LV2 plugin that derives CV signals from host tempo information. Outputs frequency and time duration values based on musical note divisions, with configurable scaling modes.
+A LV2 plugin for MOD Dwarf that derives CV signals from host tempo information. Outputs frequency and time duration values based on musical note divisions, with configurable scaling modes.
 
 ## Features
 
