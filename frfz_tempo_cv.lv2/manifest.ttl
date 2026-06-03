@@ -1,0 +1,8 @@
+@prefix lv2:  <http://lv2plug.in/ns/lv2core#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+<http://github.com/fragfz/frfz_tempo_cv>
+	a lv2:Plugin ;
+	lv2:binary <frfz_tempo_cv.so> ;
+	rdfs:seeAlso <frfz_tempo_cv.ttl> ;
+	lv2:optionalFeature lv2:hardRTCapable .
