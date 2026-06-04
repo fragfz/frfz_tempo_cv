@@ -285,9 +285,9 @@ run(LV2_Handle instance, uint32_t n_samples)
     /* Ensure valid BPM range */
     bpm = clampf(bpm, 20.0f, 280.0f);
 
-    /* Get division value (0.05 to 16, matching mod-cv-clock) */
+    /* Get division value (1 to 48, matching ttl) */
     float division = *self->division_param;
-    division = clampf(division, 0.05f, 16.0f);
+    division = clampf(division, 1.0f, 48.0f);
 
     /* Get independent min/max parameters for Hz outputs */
     float min_freq_1 = *self->min_freq_1;
