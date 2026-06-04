@@ -32,13 +32,16 @@ typedef enum {
     TIME_OUT2       = 3,
     BPM_PORT        = 4,
     DIVISIONS_PORT  = 5,
-    MIN_FREQ_PORT   = 6,
-    MAX_FREQ_PORT   = 7,
-    MIN_TIME_PORT   = 8,
-    MAX_TIME_PORT   = 9,
-    SCALING_MODE    = 10,
-    SYNC_PORT       = 11,
-    CONTROL_PORT    = 12
+    MIN_FREQ_1_PORT = 6,
+    MAX_FREQ_1_PORT = 7,
+    MIN_FREQ_2_PORT = 8,
+    MAX_FREQ_2_PORT = 9,
+    MIN_TIME_1_PORT = 10,
+    MAX_TIME_1_PORT = 11,
+    MIN_TIME_2_PORT = 12,
+    MAX_TIME_2_PORT = 13,
+    SYNC_PORT       = 14,
+    CONTROL_PORT    = 15
 } PortIndex;
 
 /* URIDs for time extension */
@@ -67,11 +70,14 @@ typedef struct {
     float* time_out2;
     float* bpm_param;          /* Manual BPM parameter */
     float* division_param;     /* Time division (0.05-16, matching mod-cv-clock) */
-    float* min_freq;
-    float* max_freq;
-    float* min_time;
-    float* max_time;
-    float* scaling_mode;       /* Linear (0) or Logarithmic (1) for Hz */
+    float* min_freq_1;         /* Min frequency for output 1 */
+    float* max_freq_1;         /* Max frequency for output 1 */
+    float* min_freq_2;         /* Min frequency for output 2 */
+    float* max_freq_2;         /* Max frequency for output 2 */
+    float* min_time_1;         /* Min time (ms) for output 1 */
+    float* max_time_1;         /* Max time (ms) for output 1 */
+    float* min_time_2;         /* Min time (ms) for output 2 */
+    float* max_time_2;         /* Max time (ms) for output 2 */
     float* sync;               /* Host sync enable/disable */
     LV2_Atom_Sequence* control;
 
@@ -107,20 +113,29 @@ connect_port(LV2_Handle instance,
         case DIVISIONS_PORT:
             self->division_param = (float*)data;
             break;
-        case MIN_FREQ_PORT:
-            self->min_freq = (float*)data;
+        case MIN_FREQ_1_PORT:
+            self->min_freq_1 = (float*)data;
             break;
-        case MAX_FREQ_PORT:
-            self->max_freq = (float*)data;
+        case MAX_FREQ_1_PORT:
+            self->max_freq_1 = (float*)data;
             break;
-        case MIN_TIME_PORT:
-            self->min_time = (float*)data;
+        case MIN_FREQ_2_PORT:
+            self->min_freq_2 = (float*)data;
             break;
-        case MAX_TIME_PORT:
-            self->max_time = (float*)data;
+        case MAX_FREQ_2_PORT:
+            self->max_freq_2 = (float*)data;
             break;
-        case SCALING_MODE:
-            self->scaling_mode = (float*)data;
+        case MIN_TIME_1_PORT:
+            self->min_time_1 = (float*)data;
+            break;
+        case MAX_TIME_1_PORT:
+            self->max_time_1 = (float*)data;
+            break;
+        case MIN_TIME_2_PORT:
+            self->min_time_2 = (float*)data;
+            break;
+        case MAX_TIME_2_PORT:
+            self->max_time_2 = (float*)data;
             break;
         case SYNC_PORT:
             self->sync = (float*)data;
@@ -209,26 +224,6 @@ clampf(float value, float min_val, float max_val)
     return value;
 }
 
-/* Apply logarithmic scaling to frequency within min/max range */
-static float
-scale_frequency_log(float freq_hz, float min_freq, float max_freq)
-{
-    /* Clamp to range first */
-    if (freq_hz < min_freq) freq_hz = min_freq;
-    if (freq_hz > max_freq) freq_hz = max_freq;
-
-    /* Logarithmic scaling: log(freq) maps linearly to log range */
-    float log_min = logf(min_freq);
-    float log_max = logf(max_freq);
-    float log_freq = logf(freq_hz);
-
-    /* Output normalized to CV range 0-10V (scaled by frequency ratio in log space) */
-    if (log_max - log_min > 0.001f) {
-        return (log_freq - log_min) / (log_max - log_min) * 10.0f;
-    }
-    return 5.0f;
-}
-
 /* Apply linear scaling to frequency within min/max range */
 static float
 scale_frequency_linear(float freq_hz, float min_freq, float max_freq)
@@ -240,6 +235,21 @@ scale_frequency_linear(float freq_hz, float min_freq, float max_freq)
     /* Linear scaling */
     if (max_freq - min_freq > 0.001f) {
         return (freq_hz - min_freq) / (max_freq - min_freq) * 10.0f;
+    }
+    return 5.0f;
+}
+
+/* Apply linear scaling to time within min/max range (0-10V) */
+static float
+scale_time_linear(float time_ms, float min_time, float max_time)
+{
+    /* Clamp to range */
+    if (time_ms < min_time) time_ms = min_time;
+    if (time_ms > max_time) time_ms = max_time;
+
+    /* Linear scaling */
+    if (max_time - min_time > 0.001f) {
+        return (time_ms - min_time) / (max_time - min_time) * 10.0f;
     }
     return 5.0f;
 }
@@ -279,23 +289,40 @@ run(LV2_Handle instance, uint32_t n_samples)
     float division = *self->division_param;
     division = clampf(division, 0.05f, 16.0f);
 
-    /* Get min/max parameters */
-    float min_freq = *self->min_freq;
-    float max_freq = *self->max_freq;
-    float min_time = *self->min_time;
-    float max_time = *self->max_time;
-    int mode = (int)(*self->scaling_mode + 0.5f);
+    /* Get independent min/max parameters for Hz outputs */
+    float min_freq_1 = *self->min_freq_1;
+    float max_freq_1 = *self->max_freq_1;
+    float min_freq_2 = *self->min_freq_2;
+    float max_freq_2 = *self->max_freq_2;
 
-    /* Ensure min <= max */
-    if (min_freq > max_freq) {
-        float tmp = min_freq;
-        min_freq = max_freq;
-        max_freq = tmp;
+    /* Get independent min/max parameters for time outputs (ms) */
+    float min_time_1 = *self->min_time_1;
+    float max_time_1 = *self->max_time_1;
+    float min_time_2 = *self->min_time_2;
+    float max_time_2 = *self->max_time_2;
+
+    /* Ensure min <= max for frequency outputs */
+    if (min_freq_1 > max_freq_1) {
+        float tmp = min_freq_1;
+        min_freq_1 = max_freq_1;
+        max_freq_1 = tmp;
     }
-    if (min_time > max_time) {
-        float tmp = min_time;
-        min_time = max_time;
-        max_time = tmp;
+    if (min_freq_2 > max_freq_2) {
+        float tmp = min_freq_2;
+        min_freq_2 = max_freq_2;
+        max_freq_2 = tmp;
+    }
+
+    /* Ensure min <= max for time outputs */
+    if (min_time_1 > max_time_1) {
+        float tmp = min_time_1;
+        min_time_1 = max_time_1;
+        max_time_1 = tmp;
+    }
+    if (min_time_2 > max_time_2) {
+        float tmp = min_time_2;
+        min_time_2 = max_time_2;
+        max_time_2 = tmp;
     }
 
     /* 
@@ -313,21 +340,13 @@ run(LV2_Handle instance, uint32_t n_samples)
     /* Calculate time in milliseconds */
     float time_ms = period_sec * 1000.0f;
 
-    /* Scale frequency outputs based on mode */
-    float freq_cv1, freq_cv2;
-    if (mode == 0) {
-        /* Linear scaling */
-        freq_cv1 = scale_frequency_linear(freq_hz, min_freq, max_freq);
-        freq_cv2 = scale_frequency_linear(freq_hz * 2.0f, min_freq, max_freq);
-    } else {
-        /* Logarithmic scaling */
-        freq_cv1 = scale_frequency_log(freq_hz, min_freq, max_freq);
-        freq_cv2 = scale_frequency_log(freq_hz * 2.0f, min_freq, max_freq);
-    }
+    /* Scale frequency outputs with linear scaling using independent min/max */
+    float freq_cv1 = scale_frequency_linear(freq_hz, min_freq_1, max_freq_1);
+    float freq_cv2 = scale_frequency_linear(freq_hz * 2.0f, min_freq_2, max_freq_2);
 
-    /* Clamp time outputs to user-specified ranges */
-    float time_cv1 = clampf(time_ms, min_time, max_time);
-    float time_cv2 = clampf(time_ms * 2.0f, min_time, max_time);
+    /* Scale time outputs with linear scaling using independent min/max (20ms to 2000ms range) */
+    float time_cv1 = scale_time_linear(time_ms, min_time_1, max_time_1);
+    float time_cv2 = scale_time_linear(time_ms * 2.0f, min_time_2, max_time_2);
 
     /* Write outputs for all samples */
     for (uint32_t i = 0; i < n_samples; ++i) {
